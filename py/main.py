@@ -1,30 +1,24 @@
 import os
-import logging
+import uuid
+from typing import List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
-
+from faker import Faker
 from kafka import KafkaAdminClient
 from kafka.admin import NewTopic
 from kafka.errors import TopicAlreadyExistsError
+from kafka.producer import KafkaProducer
 
-# Kafka configuration
-# config = {
-#     'bootstrap.servers': '10.0.0.120:9092'  # Update with your Kafka broker(s)
-# }
+from commands import CreateTransactionCommand
+from entities import Transaction
+
+from fastapi import FastAPI
 
 load_dotenv(verbose=True)
-
-# print(os.environ['TOPIC_TRANSACTION_BASIC_NAME'])
-# print(int(os.environ['TOPIC_TRANSACTION_BASIC_PARTITIONS']))
-# print(int(os.environ['TOPIC_TRANSACTION_BASIC_REPLICAS']))
-# print(os.getenv('TOPIC_TRANSACTION_BASIC_NAME'))
-
 
 app = FastAPI()
 
 
-# Create event handler
 @app.on_event('startup')
 async def startup_event():
     client = KafkaAdminClient(bootstrap_servers=os.environ['BOOTSTRAP_SERVERS'])
@@ -46,7 +40,31 @@ async def startup_event():
     # return {"message": os.getenv('TOPIC_TRANSACTION_BASIC_NAME')}
 
 
-@app.get('/hello-world')
-async def hello_world():
-    return {"message": "Helo World"}
-    # return {"message": os.getenv('TOPIC_TRANSACTION_BASIC_NAME')}
+def create_producer():
+    return KafkaProducer(bootstrap_servers=os.environ['BOOTSTRAP_SERVERS'])
+
+
+@app.post('/api/tran', status_code=201, response_model=list[Transaction])
+async def create_transactions(cmd: CreateTransactionCommand):
+    transaction_list: list[Transaction] = []
+
+    faker = Faker()
+    producer = create_producer()
+
+    for _ in range(cmd.count):
+        tran_obj = Transaction(id=uuid.uuid4(),
+                               date=faker.date(),
+                               amount=faker.currency(),
+                               customer=faker.name()
+                               )
+        print(f'{tran_obj.id} - {tran_obj.date}')
+        transaction_list.append(tran_obj)
+        producer.send(topic=os.environ['TOPIC_TRANSACTION_BASIC_NAME'],
+                      key=tran_obj.customer.lower().replace(r's+', '-').encode('utf-8'),
+                      value=tran_obj.json().encode('utf-8'))
+
+    producer.flush()
+
+    return transaction_list
+
+# create_transactions()
